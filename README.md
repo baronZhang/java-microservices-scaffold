@@ -25,12 +25,13 @@ An API gateway and five services (auth, user, product, inventory, order) on Spri
 | Check | Result | Last run |
 |---|---|---|
 | `./mvnw clean verify` | 87 tests, 0 failures, 0 skipped | 2026-11-04 |
+| [GitHub Actions](https://github.com/baronZhang/java-microservices-scaffold/actions/workflows/ci.yml) `verify` job | 87 tests, 0 failures, 0 skipped | 2026-11-05 |
 | `scripts/smoke-test.sh` through the gateway | 37 of 37 checks passed | 2026-11-04 |
 | Nine experiments in `scripts/experiments/` | Run, with real output | 2026-10-27 |
 | MySQL + Redis, Nacos, and Kafka profiles | Smoke test passed | 2026-10-27 |
 | Six images and full compose stack | Smoke test passed | 2026-10-27 |
 
-**Not verified:** the Kubernetes manifests (YAML parsing only, no cluster). Seata and RocketMQ were evaluated but not used.
+**Not verified:** the Kubernetes manifests (YAML parsing only, no cluster) and the CI `image` job (Trivy scan and GHCR push), which runs only when triggered by hand. Seata and RocketMQ were evaluated but not used.
 
 ## Quick start
 
