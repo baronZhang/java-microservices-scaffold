@@ -1,0 +1,21 @@
+# 测试 profile：每个测试上下文一个独立的内存库（MySQL 兼容模式，和运行时的 H2 文件库语法一致）
+spring:
+  datasource:
+    url: jdbc:h2:mem:${random.uuid};MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1;LOCK_TIMEOUT=10000
+    username: sa
+    password: ""
+management:
+  otlp:
+    metrics:
+      export:
+        enabled: false
+logging:
+  level:
+    ms.access: warn
+ms:
+  order:
+    # 测试里由用例直接调用服务方法，定时任务基本不触发（只在启动时跑一次空转）
+    jobs:
+      relay-interval: 1h
+      timeout-interval: 1h
+      recovery-interval: 1h

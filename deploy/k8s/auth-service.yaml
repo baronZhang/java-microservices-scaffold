@@ -1,0 +1,139 @@
+# ---------------------------------------------------------------------------
+# auth-service：Deployment + Service + HPA
+# ---------------------------------------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-service
+  namespace: ms
+  labels:
+    app: auth-service
+spec:
+  # 不写 replicas：副本数交给下面的 HPA 管。写死的话，每次 kubectl apply 都会把 HPA 扩出来的副本改回去
+  selector:
+    matchLabels:
+      app: auth-service
+  # 滚动发布：先起新的再停旧的，任何时刻都不少于期望副本数
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: auth-service
+        version: v1
+    spec:
+      # 给优雅停机留时间：preStop 等 5 秒 + Spring 的 graceful shutdown
+      terminationGracePeriodSeconds: 40
+      containers:
+        - name: auth-service
+          image: ms/auth-service:0.1.0
+          ports:
+            - containerPort: 9081
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: container,mysql,redis
+            - name: MS_CONFIG_DIR
+              value: /config
+            - name: MYSQL_HOST
+              value: mysql
+            - name: REDIS_HOST
+              value: redis
+            # 多副本必须共用同一对 JWT 密钥（来自 Secret ms-jwt），否则 A 副本签的 token B 副本的公钥验不过
+            - name: MS_AUTH_JWT_PRIVATEKEY
+              value: file:/etc/ms/jwt/private.pem
+            - name: MS_AUTH_JWT_PUBLICKEY
+              value: file:/etc/ms/jwt/public.pem
+            - name: MS_AUTH_JWT_KEYID
+              value: ms-2026-10
+          # 只拿自己需要的密钥：数据库账号 + 要校验的各个客户端密钥
+          envFrom:
+            - secretRef:
+                name: ms-db
+            - secretRef:
+                name: ms-client-order-service
+            - secretRef:
+                name: ms-client-product-service
+          # 只设内存上限、不设 CPU 上限：CPU 限额会导致 JVM 被节流（throttling），延迟毛刺很难排查
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              memory: 768Mi
+          # 启动探针：JVM 启动慢，启动期间不做存活检查，最多给 2 分钟
+          startupProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 9081
+            periodSeconds: 2
+            failureThreshold: 60
+          # 存活探针：只看进程是否卡死，不检查数据库等依赖（依赖挂了重启自己也没用，还会引发连锁重启）
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 9081
+            periodSeconds: 10
+            failureThreshold: 3
+          # 就绪探针：没就绪就从 Service 的 endpoints 里摘掉，不接流量
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 9081
+            periodSeconds: 5
+            failureThreshold: 3
+          lifecycle:
+            preStop:
+              # 先等 kube-proxy / 网关把这个 Pod 摘掉，再开始停机，避免停机瞬间还有请求进来
+              sleep:
+                seconds: 5
+          volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
+            - name: jwt
+              mountPath: /etc/ms/jwt
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: ms-config
+        - name: jwt
+          secret:
+            secretName: ms-jwt
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-service
+  namespace: ms
+spec:
+  selector:
+    app: auth-service
+    version: v1
+  ports:
+    - port: 9081
+      targetPort: 9081
+---
+# CPU 平均使用率超过 70% 就扩容。指标来自 metrics-server；生产更常按 QPS / 延迟等自定义指标扩缩
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: auth-service
+  namespace: ms
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: auth-service
+  minReplicas: 2
+  maxReplicas: 4
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70

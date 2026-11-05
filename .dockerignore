@@ -1,0 +1,4 @@
+# 镜像构建上下文：各服务的 Dockerfile 只需要 <服务>/target/ 下的可执行 jar。
+# 先全部排除、再放行 jar：上下文小、构建快，也不会把 .run/ 里的日志和 Kafka 数据、.data/ 里的 H2 库、.git 带进构建
+**
+!*/target/*.jar

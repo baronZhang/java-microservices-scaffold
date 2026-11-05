@@ -1,0 +1,14 @@
+-- MySQL 初始化：每个服务一个库（数据库按服务隔离，服务之间不能跨库 JOIN，只能走接口或事件）
+-- 账号只有这几个库的权限。密码是本地演示用的，生产来自 Secret
+CREATE DATABASE IF NOT EXISTS ms_auth DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+CREATE DATABASE IF NOT EXISTS ms_user DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+CREATE DATABASE IF NOT EXISTS ms_product DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+CREATE DATABASE IF NOT EXISTS ms_inventory DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+CREATE DATABASE IF NOT EXISTS ms_order DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+CREATE USER IF NOT EXISTS 'ms'@'%' IDENTIFIED BY 'ms-demo-pass';
+GRANT ALL PRIVILEGES ON ms_auth.* TO 'ms'@'%';
+GRANT ALL PRIVILEGES ON ms_user.* TO 'ms'@'%';
+GRANT ALL PRIVILEGES ON ms_product.* TO 'ms'@'%';
+GRANT ALL PRIVILEGES ON ms_inventory.* TO 'ms'@'%';
+GRANT ALL PRIVILEGES ON ms_order.* TO 'ms'@'%';
+FLUSH PRIVILEGES;

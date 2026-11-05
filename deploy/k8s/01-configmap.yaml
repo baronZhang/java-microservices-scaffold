@@ -1,0 +1,239 @@
+# 外部配置：由 scripts/gen-k8s-configmap.sh 从 config/ 目录生成（不要手工改这个文件），
+# 挂载到每个容器的 /config（环境变量 MS_CONFIG_DIR=/config）。
+# 改了 ConfigMap 以后，挂载的文件会在一两分钟内自动更新，再对服务执行 POST /actuator/refresh 即可生效（或用 Nacos 推送）
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ms-config
+  namespace: ms
+data:
+  gateway.yml: |
+    # 网关的"动态配置"（本地版配置中心里属于 gateway 的那一份）。
+    # 改完执行 curl -X POST localhost:9080/actuator/refresh，限流阈值、灰度名单立即生效，不用重启。
+    # nacos profile 下同样的内容放在 Nacos 的 dataId=gateway.yaml 里，改完由 Nacos 推送。
+    ms:
+      gateway:
+        rate-limit:
+          defaults:
+            replenish-rate: 20
+            burst-capacity: 40
+        gray:
+          # 灰度用户白名单（用户 id）
+          user-ids: []
+          # 按用户 id 取模的灰度比例 0~100
+          percentage: 0
+  ms-common.yml: |
+    # ============================================================================
+    # 所有服务（含网关）共用的配置 —— "本地版配置中心"
+    #
+    # 每个服务的 application.yml 里都有：
+    #   spring.config.import: optional:file:${MS_CONFIG_DIR:./config}/ms-common.yml
+    # 所以从项目根目录启动时会读到这里；Docker / K8s 里把这个目录挂载到 /config 并设置 MS_CONFIG_DIR。
+    #
+    # 动态刷新：改完这里的配置后执行 POST /actuator/refresh，@ConfigurationProperties 绑定的配置会重新绑定。
+    # nacos profile 下，同样的内容放在 Nacos 的 dataId=ms-common.yaml 里，改完由 Nacos 推送，不用手动 refresh。
+    # ============================================================================
+
+    spring:
+      threads:
+        virtual:
+          # JDK 21+ 的虚拟线程：Tomcat 每个请求一个虚拟线程，阻塞 IO（JDBC、HTTP 调用）不再占用平台线程
+          enabled: true
+      datasource:
+        # 默认 profile：每个服务一个 H2 文件库（数据库按服务隔离）。
+        #   MODE=MySQL：尽量兼容 MySQL 语法，mysql profile 下同一份 Flyway 脚本能直接跑
+        #   AUTO_SERVER=TRUE：同一服务的多个实例可以共享同一个库（第一个进程顺带启动 TCP 服务，其余进程连它）
+        #   LOCK_TIMEOUT：行锁等待上限，并发扣库存时默认的 1 秒不够
+        #   WRITE_DELAY=0：每次提交立即刷盘。H2 默认提交后最多延迟 500ms 才写盘，进程被 kill -9 会丢掉刚提交的事务——
+        #     实验 3 里真实遇到过：库存服务丢了预占记录，支付确认到达时报"没有预占记录"（见文档"踩坑记录"）
+        url: jdbc:h2:file:${ms.data-dir}/h2/${ms.db.name};MODE=MySQL;DATABASE_TO_LOWER=TRUE;AUTO_SERVER=TRUE;LOCK_TIMEOUT=10000;WRITE_DELAY=0
+        username: sa
+        password: ""
+      cloud:
+        loadbalancer:
+          health-check:
+            # 静态服务列表需要自己探活：每 5 秒探一次 /actuator/health，挂掉的实例从候选列表里剔除
+            initial-delay: 0s
+            interval: 5s
+          # 灰度标签：请求头 X-Gray 的值和实例元数据里的 hint 匹配；没有请求头时按 hint.default 选实例
+          hint-header-name: X-Gray
+          hint:
+            default: stable
+
+    ms:
+      # 默认 profile 的数据目录（H2 文件库在 ${ms.data-dir}/h2 下）
+      data-dir: ${MS_DATA_DIR:./.data}
+
+    management:
+      endpoints:
+        web:
+          exposure:
+            include: health,info,refresh,chaos,metrics,circuitbreakers,outbox,loggers
+      endpoint:
+        health:
+          show-details: always
+          probes:
+            # /actuator/health/liveness、/actuator/health/readiness：K8s 的存活和就绪探针
+            enabled: true
+      health:
+        # 默认 profile 不连 Redis，关掉 Redis 健康检查，否则健康状态会一直是 DOWN
+        redis:
+          enabled: false
+      tracing:
+        sampling:
+          # 演示环境全采样；生产一般按比例采样（如 0.1），或在网关按需打标
+          probability: 1.0
+      # OpenTelemetry starter 默认每分钟把指标推到 localhost:4318（OTLP 收集器），本机没有收集器会一直报 WARN。
+      # 默认 profile 关掉；接入可观测平台时（见文档"可观测"）再打开并配置地址
+      otlp:
+        metrics:
+          export:
+            enabled: false
+
+    logging:
+      pattern:
+        # 每行日志带上 [服务名,traceId,spanId]，跨服务排查时按 traceId 一搜就能串起整条链路
+        correlation: "[${spring.application.name:},%X{traceId:-},%X{spanId:-}] "
+
+    ---
+    # ---------------------------------------------------------------------------
+    # 静态服务发现：默认 profile 没有注册中心，实例列表写在这里（相当于"手写的注册表"）。
+    # 第二个实例（端口 +10）默认不启动，健康检查会把它过滤掉；做负载均衡、灰度实验时再启动。
+    # nacos / container profile 下不启用这一段。
+    # ---------------------------------------------------------------------------
+    spring:
+      config:
+        activate:
+          on-profile: "!nacos & !container"
+      cloud:
+        discovery:
+          client:
+            simple:
+              instances:
+                auth-service:
+                  - uri: http://localhost:9081
+                user-service:
+                  - uri: http://localhost:9082
+                product-service:
+                  - uri: http://localhost:9083
+                    metadata:
+                      hint: stable
+                      version: v1
+                  - uri: http://localhost:9093
+                    metadata:
+                      hint: gray
+                      version: v2
+                inventory-service:
+                  - uri: http://localhost:9084
+                  - uri: http://localhost:9094
+                order-service:
+                  - uri: http://localhost:9085
+                  - uri: http://localhost:9095
+
+    ---
+    # 服务自己的动态配置：默认从本地 config/<服务名>.yml 读（改完 POST /actuator/refresh）。
+    # nacos profile 下不加载本地这份，只从 Nacos 读——两份同时加载时，本地文件优先级更高，
+    # 而列表类型的配置不会跨来源合并，Nacos 推送的灰度名单会被本地的空列表盖住（实测踩到的坑，见文档"踩坑记录"）
+    spring:
+      config:
+        activate:
+          on-profile: "!nacos"
+        import: optional:file:${MS_CONFIG_DIR:./config}/${spring.application.name}.yml
+
+    ---
+    # demo profile：演示用的接口和故障注入
+    spring:
+      config:
+        activate:
+          on-profile: demo
+    ms:
+      chaos:
+        enabled: true
+
+    ---
+    # mysql profile：每个服务一个库（ms_auth、ms_user……），表结构由各服务自己的 Flyway 脚本管理
+    spring:
+      config:
+        activate:
+          on-profile: mysql
+      datasource:
+        url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/ms_${ms.db.name}?useUnicode=true&characterEncoding=utf8&connectionTimeZone=UTC
+        username: ${MYSQL_USER:ms}
+        password: ${MYSQL_PASSWORD:ms-demo-pass}
+
+    ---
+    # redis profile：网关的分布式限流和 token 吊销清单、订单服务的分布式锁换成 Redis 实现
+    spring:
+      config:
+        activate:
+          on-profile: redis
+      data:
+        redis:
+          host: ${REDIS_HOST:localhost}
+          port: ${REDIS_PORT:6379}
+    management:
+      health:
+        redis:
+          enabled: true
+
+    ---
+    # kafka profile：订单事件经 Kafka 投递（默认 profile 是 HTTP 直接推送）
+    spring:
+      config:
+        activate:
+          on-profile: kafka
+      kafka:
+        bootstrap-servers: ${KAFKA_SERVERS:localhost:9092}
+
+    ---
+    # nacos profile：注册中心和配置中心换成 Nacos。注册中心只返回健康实例，客户端不再自己探活
+    spring:
+      config:
+        activate:
+          on-profile: nacos
+        # 公共配置 + 服务自己的配置都从 Nacos 读；refreshEnabled=true 表示 Nacos 里改了会推送过来自动刷新
+        import:
+          - optional:nacos:ms-common.yaml?refreshEnabled=true
+          - optional:nacos:${spring.application.name}.yaml?refreshEnabled=true
+      cloud:
+        nacos:
+          server-addr: ${NACOS_ADDR:127.0.0.1:8848}
+          discovery:
+            enabled: true
+          config:
+            enabled: true
+    ms:
+      loadbalancer:
+        health-check: false
+
+    ---
+    # container profile（docker-compose / K8s）：服务发现交给平台——容器网络的 DNS、K8s 的 Service（kube-proxy 负载均衡），
+    # 客户端只认一个"服务地址"，不再需要注册中心和客户端探活
+    spring:
+      config:
+        activate:
+          on-profile: container
+      cloud:
+        discovery:
+          client:
+            simple:
+              instances:
+                auth-service:
+                  - uri: http://auth-service:9081
+                user-service:
+                  - uri: http://user-service:9082
+                product-service:
+                  - uri: http://product-service:9083
+                    metadata:
+                      hint: stable
+                  # 灰度版本是单独的 Deployment + Service（见 deploy/k8s/product-service-gray.yaml、deploy/docker-compose.yml）
+                  - uri: http://product-service-gray:9083
+                    metadata:
+                      hint: gray
+                inventory-service:
+                  - uri: http://inventory-service:9084
+                order-service:
+                  - uri: http://order-service:9085
+    ms:
+      loadbalancer:
+        health-check: false

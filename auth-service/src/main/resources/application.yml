@@ -1,0 +1,52 @@
+# 认证服务。公共配置（服务发现、链路追踪、数据源模板……）在 config/ms-common.yml
+server:
+  port: ${PORT:9081}
+
+spring:
+  application:
+    name: auth-service
+  config:
+    # 公共配置；服务自己的动态配置（config/<服务名>.yml 或 Nacos 里的 <服务名>.yaml）由 ms-common.yml 按 profile 决定从哪里加载
+    import: optional:file:${MS_CONFIG_DIR:./config}/ms-common.yml
+  cloud:
+    nacos:
+      # 默认不用 Nacos；nacos profile（见 config/ms-common.yml）里打开
+      discovery:
+        enabled: false
+      config:
+        enabled: false
+  # 这个服务没有 @Scheduled 任务，不需要别的特殊配置
+
+ms:
+  db:
+    name: auth
+  security:
+    # 不需要登录的接口：登录、刷新、OAuth2 端点（其他服务换服务令牌、取公钥）
+    public-paths:
+      - /api/auth/login
+      - /api/auth/refresh
+      - /oauth2/**
+  auth:
+    access-token-ttl: 5m
+    refresh-token-ttl: 7d
+    service-token-ttl: 10m
+    # 可以换服务令牌的服务。密钥这里只是开发默认值，生产用环境变量 / K8s Secret 覆盖
+    clients:
+      - id: order-service
+        secret: ${ORDER_SERVICE_CLIENT_SECRET:dev-order-secret}
+      - id: product-service
+        secret: ${PRODUCT_SERVICE_CLIENT_SECRET:dev-product-secret}
+
+---
+spring:
+  config:
+    activate:
+      on-profile: demo
+ms:
+  security:
+    public-paths:
+      - /api/auth/login
+      - /api/auth/refresh
+      - /oauth2/**
+      # 演示页用它查看刷新次数；设成公开接口，避免它自己触发刷新、干扰统计（和 Mock 一致）
+      - /api/debug/stats

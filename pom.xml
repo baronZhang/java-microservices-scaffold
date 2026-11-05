@@ -1,0 +1,328 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  根 POM：既是聚合器（列出所有模块），也是父 POM（统一版本、插件和质量门禁）。
+
+  基线来自 Spring Initializr（2026-10-27 生成，Boot 4.1.2 / Java 25 / Spring Cloud 2025.1.4），
+  然后按"只用发布满两周的版本"降到 Boot 4.1.1、Spring Cloud 2025.1.3。原因见 docs/02 工程化篇。
+
+  依赖版本从哪来、同一个依赖出现在多处时谁说了算（Maven 3.10.0 实测，过程见 docs"微服务 2.1"）：
+  1. dependencyManagement 里直接写版本的条目优先级最高，不管写在本 POM 还是继承自父 POM（本 POM 覆盖父 POM）。
+     Boot 直接列出的库（HikariCP、H2、Flyway……）属于这一类，import 的 BOM 改不动它们，要改只能覆盖 Boot 的版本属性。
+  2. 然后才轮到 import 的 BOM，先到先得：本 POM 的 import 排在前面，从父 POM 继承来的 import 排在后面。
+     所以 Boot 用 import 管理的家族（Jackson、Netty、Micrometer、Log4j……）会被这里 import 的 BOM 静默改掉——
+     Spring Cloud Alibaba 的 BOM 就把 log4j 从 Boot 的 2.25.5 降到了 2.25.1，下面先 import 一次 log4j-bom 把它换回来。
+     scripts/check-bom-overrides.py 列出所有被 import 改掉的 Boot 版本，CI 里也跑。
+  业务模块的 pom 里一律不写版本号，enforcer 会检查重复声明。
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <!-- 4.1.2 于 2026-10-22 发布，不满两周；4.1.1 发布于 2026-08-20 -->
+        <version>4.1.1</version>
+        <relativePath/>
+    </parent>
+
+    <groupId>com.wd.ms</groupId>
+    <artifactId>ms-parent</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+    <packaging>pom</packaging>
+    <name>ms-parent</name>
+    <description>Java 微服务脚手架 demo：网关 + 认证 + 用户 + 商品 + 库存 + 订单</description>
+
+    <modules>
+        <module>common</module>
+        <module>gateway</module>
+        <module>auth-service</module>
+        <module>user-service</module>
+        <module>product-service</module>
+        <module>inventory-service</module>
+        <module>order-service</module>
+    </modules>
+
+    <properties>
+        <!-- JDK 25 是当前的 LTS（下一个 LTS 是 2027 年 9 月的 JDK 29） -->
+        <java.version>25</java.version>
+        <!-- spring-cloud-commons 5.0.3 的兼容性校验声明支持 Boot 4.0.x 和 4.1.x -->
+        <spring-cloud.version>2025.1.3</spring-cloud.version>
+        <!--
+          Spring Cloud Alibaba 2025.1.0.0 的构建基线是 Boot 4.0.0，官方没有声明支持 4.1。
+          只用它的 Nacos 注册/配置（nacos profile），并在 Boot 4.1.1 上实测过注册、发现、配置推送刷新。
+          Sentinel / Seata / RocketMQ 没有引入，原因见 docs/01 架构篇的 ADR。
+        -->
+        <spring-cloud-alibaba.version>2025.1.0.0</spring-cloud-alibaba.version>
+
+        <!-- 以下是 BOM 不管、需要显式写死的版本，每个都核对过发布日期（满两周） -->
+        <archunit.version>1.5.1</archunit.version>
+        <spotless-maven-plugin.version>3.10.4</spotless-maven-plugin.version>
+        <palantir-java-format.version>2.102.0</palantir-java-format.version>
+        <spotbugs-maven-plugin.version>4.10.5.0</spotbugs-maven-plugin.version>
+        <jacoco-maven-plugin.version>0.8.15</jacoco-maven-plugin.version>
+
+        <!-- SpotBugs 默认就跑，本地和 CI 同一套门禁；本地想快速迭代时临时加 -Dspotbugs.skip=true -->
+        <spotbugs.skip>false</spotbugs.skip>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <!-- 用 Boot 的版本属性先 import 一次 log4j-bom：import 之间先到先得，排在 Spring Cloud Alibaba 的 BOM 前面，
+                 才能把它管理的 log4j 2.25.1 换回 Boot 的版本（规则见文件头注释） -->
+            <dependency>
+                <groupId>org.apache.logging.log4j</groupId>
+                <artifactId>log4j-bom</artifactId>
+                <version>${log4j2.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+
+            <!-- Spring Cloud 全家桶的版本由 release train BOM 统一管理 -->
+            <dependency>
+                <groupId>org.springframework.cloud</groupId>
+                <artifactId>spring-cloud-dependencies</artifactId>
+                <version>${spring-cloud.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+
+            <dependency>
+                <groupId>com.alibaba.cloud</groupId>
+                <artifactId>spring-cloud-alibaba-dependencies</artifactId>
+                <version>${spring-cloud-alibaba.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+
+            <!-- 自己的公共模块：版本跟随项目版本 -->
+            <dependency>
+                <groupId>com.wd.ms</groupId>
+                <artifactId>common-core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.wd.ms</groupId>
+                <artifactId>common-starter-web</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.wd.ms</groupId>
+                <artifactId>common-starter-security</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.wd.ms</groupId>
+                <artifactId>common-test</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+
+            <!-- BOM 之外的第三方库 -->
+            <dependency>
+                <groupId>com.tngtech.archunit</groupId>
+                <artifactId>archunit-junit5</artifactId>
+                <version>${archunit.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>com.diffplug.spotless</groupId>
+                    <artifactId>spotless-maven-plugin</artifactId>
+                    <version>${spotless-maven-plugin.version}</version>
+                </plugin>
+                <plugin>
+                    <groupId>com.github.spotbugs</groupId>
+                    <artifactId>spotbugs-maven-plugin</artifactId>
+                    <version>${spotbugs-maven-plugin.version}</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.jacoco</groupId>
+                    <artifactId>jacoco-maven-plugin</artifactId>
+                    <version>${jacoco-maven-plugin.version}</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <configuration>
+                        <!-- 保留方法参数名：Spring 的 @PathVariable / @RequestParam 不写 name 也能绑定 -->
+                        <parameters>true</parameters>
+                        <!-- JDK 23 起 javac 默认不再自动发现注解处理器，必须显式声明（Initializr 生成的工程也是这样做的） -->
+                        <annotationProcessorPaths>
+                            <path>
+                                <groupId>org.springframework.boot</groupId>
+                                <artifactId>spring-boot-configuration-processor</artifactId>
+                            </path>
+                        </annotationProcessorPaths>
+                        <compilerArgs>
+                            <arg>-Xlint:all,-processing,-serial,-this-escape</arg>
+                        </compilerArgs>
+                    </configuration>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+
+        <plugins>
+            <!-- 质量门禁 1：依赖与环境的硬性规则 -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>enforce-rules</id>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <requireMavenVersion>
+                                    <version>[3.9,)</version>
+                                </requireMavenVersion>
+                                <requireJavaVersion>
+                                    <version>[25,)</version>
+                                    <message>需要 JDK 25+：export JAVA_HOME=/opt/homebrew/opt/openjdk（见 scripts/env.sh）</message>
+                                </requireJavaVersion>
+                                <!-- 同一个 pom 里重复声明同一个依赖，往往是复制粘贴留下的隐患 -->
+                                <banDuplicatePomDependencyVersions/>
+                                <!-- 构建时必须写明所有插件版本，避免"今天和明天构建出来的不一样" -->
+                                <requirePluginVersions>
+                                    <unCheckedPluginList>org.apache.maven.plugins:maven-site-plugin</unCheckedPluginList>
+                                </requirePluginVersions>
+                                <!-- 除了自己的模块，不允许依赖 SNAPSHOT（内容会变，构建不可重复） -->
+                                <requireReleaseDeps>
+                                    <onlyWhenRelease>false</onlyWhenRelease>
+                                    <excludes>
+                                        <exclude>com.wd.ms:*</exclude>
+                                    </excludes>
+                                </requireReleaseDeps>
+                                <!-- 黑名单：有安全前科或已被替代的库 -->
+                                <bannedDependencies>
+                                    <excludes>
+                                        <!-- fastjson 1.x 多次出现反序列化远程代码执行漏洞 -->
+                                        <exclude>com.alibaba:fastjson</exclude>
+                                        <!-- log4j 1.x 早已停止维护；log4j-core 统一不用，日志走 logback -->
+                                        <exclude>log4j:log4j</exclude>
+                                        <exclude>org.apache.logging.log4j:log4j-core</exclude>
+                                        <!-- 统一用 JUnit Jupiter，不再混用 JUnit 4 -->
+                                        <exclude>junit:junit</exclude>
+                                        <!--
+                                          注意：不要禁 commons-logging。Spring Framework 7 去掉了 spring-jcl，
+                                          改为直接依赖 commons-logging 1.3（它自带 SLF4J 适配）。这是实际踩到的坑，见文档"踩坑记录"。
+                                        -->
+                                    </excludes>
+                                    <message>引入了被禁止的依赖，原因见根 pom.xml 里 bannedDependencies 的注释</message>
+                                </bannedDependencies>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- 质量门禁 2：代码格式。mvnw spotless:apply 自动格式化，verify 阶段只检查 -->
+            <plugin>
+                <groupId>com.diffplug.spotless</groupId>
+                <artifactId>spotless-maven-plugin</artifactId>
+                <configuration>
+                    <java>
+                        <!-- palantir-java-format：4 空格缩进、120 列，和阿里巴巴 Java 开发手册的习惯一致 -->
+                        <palantirJavaFormat>
+                            <version>${palantir-java-format.version}</version>
+                        </palantirJavaFormat>
+                        <removeUnusedImports/>
+                        <importOrder/>
+                        <trimTrailingWhitespace/>
+                        <endWithNewline/>
+                    </java>
+                </configuration>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>check</goal>
+                        </goals>
+                        <phase>verify</phase>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- 质量门禁 3：静态检查（字节码层面的 bug 模式） -->
+            <plugin>
+                <groupId>com.github.spotbugs</groupId>
+                <artifactId>spotbugs-maven-plugin</artifactId>
+                <configuration>
+                    <effort>Max</effort>
+                    <threshold>Medium</threshold>
+                    <excludeFilterFile>${maven.multiModuleProjectDirectory}/config/quality/spotbugs-exclude.xml</excludeFilterFile>
+                </configuration>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>check</goal>
+                        </goals>
+                        <phase>verify</phase>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- 单元测试 *Test 由 surefire 跑，集成测试 *IT 由 failsafe 跑（都在 verify 之前） -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-failsafe-plugin</artifactId>
+            </plugin>
+
+            <!-- 覆盖率报告：只出报告，不设硬阈值（demo 阶段阈值容易变成"为覆盖而写测试"）。
+                 单元测试写 jacoco.exec、集成测试写 jacoco-it.exec，verify 阶段先合并再出一份报告（target/site/jacoco）；
+                 网关只有集成测试，不合并的话它就没有覆盖率报告 -->
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>prepare-agent</id>
+                        <goals>
+                            <goal>prepare-agent</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>prepare-agent-it</id>
+                        <goals>
+                            <goal>prepare-agent-integration</goal>
+                        </goals>
+                    </execution>
+                    <!-- 同一阶段的两个 execution 按声明顺序执行：先合并，再出报告 -->
+                    <execution>
+                        <id>merge</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>merge</goal>
+                        </goals>
+                        <configuration>
+                            <fileSets>
+                                <fileSet>
+                                    <directory>${project.build.directory}</directory>
+                                    <includes>
+                                        <include>jacoco.exec</include>
+                                        <include>jacoco-it.exec</include>
+                                    </includes>
+                                </fileSet>
+                            </fileSets>
+                            <destFile>${project.build.directory}/jacoco-merged.exec</destFile>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>report</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>report</goal>
+                        </goals>
+                        <configuration>
+                            <dataFile>${project.build.directory}/jacoco-merged.exec</dataFile>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

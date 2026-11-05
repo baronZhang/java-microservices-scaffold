@@ -1,0 +1,7 @@
+{
+  "orderNo": "contract-order-1",
+  "items": [
+    { "skuId": 1, "quantity": 2 },
+    { "skuId": 2, "quantity": 1 }
+  ]
+}

@@ -1,0 +1,66 @@
+# 商品服务。公共配置在 config/ms-common.yml
+server:
+  port: ${PORT:9083}
+
+spring:
+  application:
+    name: product-service
+  config:
+    # 公共配置；服务自己的动态配置（config/<服务名>.yml 或 Nacos 里的 <服务名>.yaml）由 ms-common.yml 按 profile 决定从哪里加载
+    import: optional:file:${MS_CONFIG_DIR:./config}/ms-common.yml
+  cloud:
+    circuitbreaker:
+      resilience4j:
+        # 超时交给 HTTP 客户端的 read-timeout，不用 Resilience4j 的 TimeLimiter：
+        # TimeLimiter 默认 1 秒，而且会把调用挪到另一个线程池执行，ThreadLocal 里的链路上下文会丢。
+        # 踩过的两个坑：
+        #   1. 这类影响正确性的配置要跟着服务走（application.yml），放在外部公共配置里，测试读不到
+        #   2. 不要同时设 disable-thread-pool: true——5.0.3 的源码在那个分支里不读 disable-time-limiter，TimeLimiter 照样生效
+        disable-time-limiter: true
+      bulkhead:
+        resilience4j:
+          enabled: false
+    nacos:
+      discovery:
+        enabled: false
+      config:
+        enabled: false
+  http:
+    clients:
+      imperative:
+        # 显式指定 JDK HttpClient。Nacos 客户端会传递引入 Apache HttpClient 5，Spring Boot 检测到它就优先用它，
+        # 而它默认对 503/429 自动重发请求（连 POST 也重发）——请求数翻倍，重试也绕开了业务的幂等判断。
+        # 重试必须由业务代码按接口是否幂等来决定，这是实测踩到的坑（见文档"踩坑记录"）
+        factory: jdk
+    serviceclient:
+      # 按客户端分组配置超时：展示库存不是关键路径，超时给短一点，宁可降级也不拖慢商品页
+      inventory-service:
+        connect-timeout: 500ms
+        read-timeout: 1s
+
+ms:
+  db:
+    name: product
+  instance:
+    # 灰度实验：第二个实例用 MS_INSTANCE_VERSION=v2 启动
+    version: ${MS_INSTANCE_VERSION:v1}
+  security:
+    # 以 product-service 的身份调用库存服务的内部接口
+    client:
+      id: product-service
+      secret: ${PRODUCT_SERVICE_CLIENT_SECRET:dev-product-secret}
+
+# 熔断器：最近 10 次调用里失败或慢调用超过一半就打开，10 秒后放 2 个请求试探
+resilience4j:
+  circuitbreaker:
+    configs:
+      default:
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        failure-rate-threshold: 50
+        slow-call-duration-threshold: 800ms
+        slow-call-rate-threshold: 50
+        wait-duration-in-open-state: 10s
+        permitted-number-of-calls-in-half-open-state: 2
+        automatic-transition-from-open-to-half-open-enabled: true

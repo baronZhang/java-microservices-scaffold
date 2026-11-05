@@ -1,0 +1,14 @@
+# 网关的"动态配置"（本地版配置中心里属于 gateway 的那一份）。
+# 改完执行 curl -X POST localhost:9080/actuator/refresh，限流阈值、灰度名单立即生效，不用重启。
+# nacos profile 下同样的内容放在 Nacos 的 dataId=gateway.yaml 里，改完由 Nacos 推送。
+ms:
+  gateway:
+    rate-limit:
+      defaults:
+        replenish-rate: 20
+        burst-capacity: 40
+    gray:
+      # 灰度用户白名单（用户 id）
+      user-ids: []
+      # 按用户 id 取模的灰度比例 0~100
+      percentage: 0

@@ -1,0 +1,5 @@
+# 所有资源放在 ms 命名空间里，和集群里的其他系统隔离（RBAC、资源配额、网络策略都可以按命名空间设置）
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ms

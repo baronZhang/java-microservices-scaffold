@@ -1,0 +1,35 @@
+# 集群入口：只把网关暴露出去。TLS 证书由 cert-manager 之类的组件管理（这里省略）
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ms-gateway
+  namespace: ms
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: gateway
+                port:
+                  number: 9080
+---
+# 网络策略：除了网关，其他服务只接受命名空间内的流量（内部接口在网络层面也不可能被外部访问）
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: internal-only
+  namespace: ms
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: NotIn
+        values: [gateway]
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: {}

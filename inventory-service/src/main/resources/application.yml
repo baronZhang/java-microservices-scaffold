@@ -1,0 +1,24 @@
+# 库存服务。公共配置在 config/ms-common.yml
+server:
+  port: ${PORT:9084}
+
+spring:
+  application:
+    name: inventory-service
+  config:
+    # 公共配置；服务自己的动态配置（config/<服务名>.yml 或 Nacos 里的 <服务名>.yaml）由 ms-common.yml 按 profile 决定从哪里加载
+    import: optional:file:${MS_CONFIG_DIR:./config}/ms-common.yml
+  cloud:
+    nacos:
+      discovery:
+        enabled: false
+      config:
+        enabled: false
+  kafka:
+    # 只有 kafka profile 下才有监听器，默认 profile 不会去连 Kafka
+    consumer:
+      auto-offset-reset: earliest
+
+ms:
+  db:
+    name: inventory

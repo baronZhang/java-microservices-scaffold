@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SpotBugs 排除规则。每一条都要写清楚为什么排除，不能"报错就排除"。
+-->
+<FindBugsFilter>
+    <!-- 暴露内部可变对象：record 和 Spring 注入的 Bean 天然会命中，误报远多于真问题 -->
+    <Match>
+        <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
+    </Match>
+    <!-- 构造器抛异常可能被 finalizer 攻击：JDK 18 起 finalize 已废弃，这类攻击面不存在于本项目 -->
+    <Match>
+        <Bug pattern="CT_CONSTRUCTOR_THROW"/>
+    </Match>
+    <!-- Flyway 的 Java 迁移类按约定命名为 V2__Xxx，不符合 Java 命名规范是有意的 -->
+    <Match>
+        <Package name="db.migration"/>
+        <Bug pattern="NM_CLASS_NAMING_CONVENTION"/>
+    </Match>
+</FindBugsFilter>

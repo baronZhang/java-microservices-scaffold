@@ -1,0 +1,73 @@
+# 中间件（给 mysql / redis / nacos profile 用）。服务本身仍在本机用 scripts/start-all.sh 启动。
+#   docker compose -f deploy/docker-compose.infra.yml up -d mysql redis nacos
+# 镜像版本都写死（不用 latest）。本机连不上 Docker Hub：mysql:8.0.30、redis:7-alpine、nacos/nacos-server:v3.1.1 本地已有，能起；
+# Kafka、Seata 的镜像本地没有，下面列出来供有网络时使用（未在本机验证）。
+name: ms-infra
+
+services:
+  mysql:
+    image: mysql:8.0.30
+    environment:
+      MYSQL_ROOT_PASSWORD: ms-demo-root
+      TZ: UTC
+    command:
+      # 和生产一致的持久化设置：每次提交都刷 redo log、每次提交都同步 binlog（见文档"踩坑记录"里 H2 丢数据那一条）
+      - --innodb-flush-log-at-trx-commit=1
+      - --sync-binlog=1
+      - --character-set-server=utf8mb4
+    ports:
+      - "3306:3306"
+    volumes:
+      - ./mysql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-pms-demo-root"]
+      interval: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      # 映射到 6380：本机已经有一个 brew 装的 Redis 占着 6379
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+
+  nacos:
+    image: nacos/nacos-server:v3.1.1
+    environment:
+      MODE: standalone
+      # Nacos 3.x 启动必须配置这三个鉴权参数（即使不开鉴权）；这里是本地演示值
+      NACOS_AUTH_ENABLE: "false"
+      NACOS_AUTH_TOKEN: bXMtZGVtby1uYWNvcy10b2tlbi1mb3ItbG9jYWwtZGV2ZWxvcG1lbnQtb25seQ==
+      NACOS_AUTH_IDENTITY_KEY: ms-demo
+      NACOS_AUTH_IDENTITY_VALUE: ms-demo
+      JVM_XMS: 512m
+      JVM_XMX: 512m
+      JVM_XMN: 256m
+    ports:
+      - "8848:8848"   # HTTP 接口（客户端和 OpenAPI 用）
+      - "9848:9848"   # gRPC（客户端用，端口 = 8848 + 1000）
+      - "18080:8080"  # 3.x 的控制台（8080 留给单体版，映射到 18080）
+
+  # ---- 以下镜像本地没有，未验证 ----
+  kafka:
+    image: apache/kafka:4.1.0
+    profiles: ["unverified"]
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    ports:
+      - "9092:9092"
+
+  seata:
+    image: apache/seata-server:2.5.0
+    profiles: ["unverified"]
+    ports:
+      - "8091:8091"
+      - "7091:7091"

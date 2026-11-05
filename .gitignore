@@ -1,0 +1,15 @@
+# 构建产物
+target/
+!**/src/main/**/target/
+!**/src/test/**/target/
+.mvn/wrapper/maven-wrapper.jar
+
+# 本地运行产生的数据和日志（H2 文件库、进程号、日志）
+.data/
+.run/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.DS_Store

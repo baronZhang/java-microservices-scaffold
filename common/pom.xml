@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- 公共模块的聚合 POM。公共模块只放"契约"和"通用 starter"，不放任何业务代码。 -->
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>com.wd.ms</groupId>
+        <artifactId>ms-parent</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+    <artifactId>common</artifactId>
+    <packaging>pom</packaging>
+    <name>common</name>
+
+    <modules>
+        <!-- 契约：统一响应、错误码、业务异常（纯 Java，网关和服务都能用） -->
+        <module>common-core</module>
+        <!-- Servlet 服务的通用约定：全局异常、traceId、负载均衡、故障注入 -->
+        <module>common-starter-web</module>
+        <!-- 安全上下文：JWT 校验、当前用户、接口级权限、服务间令牌 -->
+        <module>common-starter-security</module>
+        <!-- 测试支撑：ArchUnit 分层规则、测试用 JWT -->
+        <module>common-test</module>
+    </modules>
+</project>

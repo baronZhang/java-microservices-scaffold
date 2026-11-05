@@ -1,0 +1,69 @@
+# 全部服务 + 中间件的容器化部署（profiles: demo,container,mysql,redis）。2026-10-27 本机实测：冒烟 37 项全过。
+# 前提：先构建镜像（本机连不上 Docker Hub，基础镜像用 BASE_IMAGE 换成 mirror.gcr.io 的镜像源）：
+#   ./mvnw -DskipTests package
+#   for s in gateway auth-service user-service product-service inventory-service order-service; do docker build --build-arg BASE_IMAGE=mirror.gcr.io/library/eclipse-temurin:25-jre -f $s/Dockerfile -t ms/$s:0.1.0 .; done
+#   docker compose -f deploy/docker-compose.yml up -d
+# 注意：MySQL、Redis 通过 extends 继承了 infra 那份的 3306、6380 端口映射，先停掉 infra 那份再起这份
+name: ms
+
+x-service: &service
+  restart: unless-stopped
+  # 内存上限和 K8s 的 limits 一致。镜像里 MaxRAMPercentage=75 按这个值算堆（约 576 MB）；
+  # 不设上限的话，JVM 会按整个 Docker 虚拟机的内存算堆，几个服务加起来就超了
+  mem_limit: 768m
+  environment: &env
+    SPRING_PROFILES_ACTIVE: demo,container,mysql,redis
+    MS_CONFIG_DIR: /config
+    MYSQL_HOST: mysql
+    REDIS_HOST: redis
+    REDIS_PORT: "6379"
+  volumes:
+    # 配置目录挂载进容器：一次构建的镜像，靠外部配置适配不同环境
+    - ../config:/config:ro
+  depends_on:
+    mysql:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+
+services:
+  mysql:
+    extends:
+      file: docker-compose.infra.yml
+      service: mysql
+  redis:
+    extends:
+      file: docker-compose.infra.yml
+      service: redis
+
+  auth-service:
+    <<: *service
+    image: ms/auth-service:0.1.0
+  user-service:
+    <<: *service
+    image: ms/user-service:0.1.0
+  product-service:
+    <<: *service
+    image: ms/product-service:0.1.0
+  # 灰度实例：container profile 里登记的 product-service-gray 在这里落地，带 X-Gray: gray 的请求才会到它。
+  # 演示用同一个镜像、只把版本号标成 v2；真实灰度换成新版本的镜像标签
+  product-service-gray:
+    <<: *service
+    image: ms/product-service:0.1.0
+    environment:
+      <<: *env
+      MS_INSTANCE_VERSION: v2
+  inventory-service:
+    <<: *service
+    image: ms/inventory-service:0.1.0
+  order-service:
+    <<: *service
+    image: ms/order-service:0.1.0
+  gateway:
+    <<: *service
+    image: ms/gateway:0.1.0
+    # 只有网关对外暴露端口；其他服务只在容器网络里可达（内部接口天然不暴露）
+    # 只绑定本机回环地址：网关的 /actuator（含 refresh、loggers）没有鉴权，不能暴露给局域网。
+    # 生产做法是 management.server.port 用单独端口、不对外映射（见文档"演进路线"）
+    ports:
+      - "127.0.0.1:9080:9080"

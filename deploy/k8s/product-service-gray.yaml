@@ -1,0 +1,105 @@
+# ---------------------------------------------------------------------------
+# product-service-gray（灰度版本）：Deployment + Service
+# ---------------------------------------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: product-service-gray
+  namespace: ms
+  labels:
+    app: product-service-gray
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: product-service-gray
+  # 滚动发布：先起新的再停旧的，任何时刻都不少于期望副本数
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: product-service-gray
+        version: v2
+    spec:
+      # 给优雅停机留时间：preStop 等 5 秒 + Spring 的 graceful shutdown
+      terminationGracePeriodSeconds: 40
+      containers:
+        - name: product-service-gray
+          image: ms/product-service:0.2.0
+          ports:
+            - containerPort: 9083
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: container,mysql,redis
+            - name: MS_CONFIG_DIR
+              value: /config
+            - name: MYSQL_HOST
+              value: mysql
+            - name: REDIS_HOST
+              value: redis
+            - name: MS_INSTANCE_VERSION
+              value: v2
+          # 只拿自己需要的密钥：数据库账号 + 自己换服务令牌用的客户端密钥
+          envFrom:
+            - secretRef:
+                name: ms-db
+            - secretRef:
+                name: ms-client-product-service
+          # 只设内存上限、不设 CPU 上限：CPU 限额会导致 JVM 被节流（throttling），延迟毛刺很难排查
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              memory: 768Mi
+          # 启动探针：JVM 启动慢，启动期间不做存活检查，最多给 2 分钟
+          startupProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 9083
+            periodSeconds: 2
+            failureThreshold: 60
+          # 存活探针：只看进程是否卡死，不检查数据库等依赖（依赖挂了重启自己也没用，还会引发连锁重启）
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 9083
+            periodSeconds: 10
+            failureThreshold: 3
+          # 就绪探针：没就绪就从 Service 的 endpoints 里摘掉，不接流量
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 9083
+            periodSeconds: 5
+            failureThreshold: 3
+          lifecycle:
+            preStop:
+              # 先等 kube-proxy / 网关把这个 Pod 摘掉，再开始停机，避免停机瞬间还有请求进来
+              sleep:
+                seconds: 5
+          volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: ms-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: product-service-gray
+  namespace: ms
+spec:
+  selector:
+    app: product-service-gray
+    version: v2
+  ports:
+    - port: 9083
+      targetPort: 9083

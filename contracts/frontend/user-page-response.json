@@ -1,0 +1,20 @@
+{
+  "code": 0,
+  "message": "ok",
+  "data": {
+    "list": [
+      {
+        "id": 4,
+        "username": "user004",
+        "nickname": "陈勇",
+        "email": "user4@example.com",
+        "role": "guest",
+        "status": "active",
+        "createdAt": "2026-01-07T01:00:00Z"
+      }
+    ],
+    "total": 1,
+    "page": 1,
+    "pageSize": 10
+  }
+}

@@ -1,0 +1,23 @@
+# 网关测试：下游全部是 stub；负载均衡的灰度标签设置和运行时一致
+spring:
+  cloud:
+    loadbalancer:
+      hint-header-name: X-Gray
+      hint:
+        default: stable
+      health-check:
+        initial-delay: 0s
+        interval: 1s
+management:
+  otlp:
+    metrics:
+      export:
+        enabled: false
+ms:
+  gateway:
+    rate-limit:
+      login:
+        replenish-rate: 1
+        burst-capacity: 3
+    gray:
+      user-ids: [42]

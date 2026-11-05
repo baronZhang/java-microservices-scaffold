@@ -1,0 +1,95 @@
+# 订单服务。公共配置在 config/ms-common.yml
+server:
+  port: ${PORT:9085}
+
+spring:
+  application:
+    name: order-service
+  config:
+    # 公共配置；服务自己的动态配置（config/<服务名>.yml 或 Nacos 里的 <服务名>.yaml）由 ms-common.yml 按 profile 决定从哪里加载
+    import: optional:file:${MS_CONFIG_DIR:./config}/ms-common.yml
+  cloud:
+    circuitbreaker:
+      # 订单服务直接用 Resilience4j 的 API 做编程式熔断（见 InventoryHttpAdapter），
+      # 不让 Spring Cloud 给 HTTP Interface 客户端分组再自动套一层熔断
+      http-services:
+        enabled: false
+    nacos:
+      discovery:
+        enabled: false
+      config:
+        enabled: false
+  http:
+    clients:
+      imperative:
+        # 显式指定 JDK HttpClient。Nacos 客户端会传递引入 Apache HttpClient 5，Spring Boot 检测到它就优先用它，
+        # 而它默认对 503/429 自动重发请求（连 POST 也重发）——请求数翻倍，重试也绕开了业务的幂等判断。
+        # 重试必须由业务代码按接口是否幂等来决定，这是实测踩到的坑（见文档"踩坑记录"）
+        factory: jdk
+    serviceclient:
+      # 超时预算要逐层递减：网关给整个请求 5 秒（response-timeout），下单内部的远程调用加起来必须更短。
+      # 最坏情况：查商品 0.5s × 2 次 + 预占库存 1s × 3 次 + 退避 0.3s ≈ 4.4s < 5s
+      inventory-service:
+        connect-timeout: 500ms
+        read-timeout: 1s
+      product-service:
+        connect-timeout: 500ms
+        read-timeout: 500ms
+  integration:
+    jdbc:
+      # INT_LOCK 表由 Flyway 管理，不让 Spring Integration 自己建表
+      initialize-schema: never
+  kafka:
+    producer:
+      acks: all
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+
+ms:
+  db:
+    name: order
+  order:
+    # 支付超时时间：生产常见 15~30 分钟；演示时可以用环境变量改短，方便观察超时关单
+    payment-timeout: ${ORDER_PAYMENT_TIMEOUT:15m}
+    # 事件投递方式：http（默认，直接推给库存服务）/ kafka
+    event-transport: http
+    # 分布式锁实现：jdbc（默认）/ redis
+    lock: jdbc
+  security:
+    # 以 order-service 的身份调用库存、商品服务的内部接口
+    client:
+      id: order-service
+      secret: ${ORDER_SERVICE_CLIENT_SECRET:dev-order-secret}
+
+# 预占库存的熔断器（编程式创建，id = inventory-reserve）
+resilience4j:
+  circuitbreaker:
+    configs:
+      default:
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        failure-rate-threshold: 50
+        slow-call-duration-threshold: 1500ms
+        slow-call-rate-threshold: 50
+        wait-duration-in-open-state: 10s
+        permitted-number-of-calls-in-half-open-state: 2
+        automatic-transition-from-open-to-half-open-enabled: true
+
+---
+spring:
+  config:
+    activate:
+      on-profile: redis
+ms:
+  order:
+    lock: redis
+
+---
+spring:
+  config:
+    activate:
+      on-profile: kafka
+ms:
+  order:
+    event-transport: kafka

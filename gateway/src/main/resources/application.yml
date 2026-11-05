@@ -1,0 +1,92 @@
+# API 网关：前端唯一的入口。公共配置（服务发现、链路追踪……）在 config/ms-common.yml
+server:
+  port: ${PORT:9080}
+
+spring:
+  application:
+    name: gateway
+  config:
+    # 公共配置；服务自己的动态配置（config/<服务名>.yml 或 Nacos 里的 <服务名>.yaml）由 ms-common.yml 按 profile 决定从哪里加载
+    import: optional:file:${MS_CONFIG_DIR:./config}/ms-common.yml
+  cloud:
+    nacos:
+      discovery:
+        enabled: false
+      config:
+        enabled: false
+    gateway:
+      server:
+        webflux:
+          # 下游超时：连接 1 秒、响应 5 秒。超时由网关返回 504，前端看到的是统一的错误结构
+          httpclient:
+            connect-timeout: 1000
+            response-timeout: 5s
+          routes:
+            # 退出登录：比 /api/auth/** 更具体，排在前面；成功后把当前 access token 加入吊销清单
+            - id: auth-logout
+              uri: lb://auth-service
+              order: -1
+              predicates:
+                - Path=/api/auth/logout
+              filters:
+                - RevokeAccessToken
+            - id: auth-service
+              uri: lb://auth-service
+              predicates:
+                - Path=/api/auth/**,/api/debug/stats
+            - id: user-service
+              uri: lb://user-service
+              predicates:
+                - Path=/api/users/**
+            - id: product-service
+              uri: lb://product-service
+              predicates:
+                - Path=/api/products/**
+            - id: inventory-service
+              uri: lb://inventory-service
+              predicates:
+                - Path=/api/inventory/**
+            - id: order-service
+              uri: lb://order-service
+              predicates:
+                - Path=/api/orders/**
+          default-filters:
+            # 网关和下游服务都会写 X-Trace-Id；同一条链路的值相同，去重后只留一个（如果出现两个不同的值，说明链路断了）
+            - DedupeResponseHeader=X-Trace-Id, RETAIN_UNIQUE
+            # 只对 GET 重试一次（幂等）：某个实例刚挂、还没被健康检查剔除时，换一个实例再试。POST 绝不在网关重试
+            - name: Retry
+              args:
+                retries: 1
+                methods: GET
+                statuses: BAD_GATEWAY,SERVICE_UNAVAILABLE
+          # /internal/** 没有配置任何路由：内部接口不可能经网关访问
+
+ms:
+  gateway:
+    public-paths:
+      - /api/auth/login
+      - /api/auth/refresh
+      - /api/debug/stats
+    rate-limit:
+      backend: memory
+      defaults:
+        replenish-rate: 20
+        burst-capacity: 40
+      login:
+        replenish-rate: 1
+        burst-capacity: 5
+    gray:
+      enabled: true
+      allow-header-override: true
+      user-ids: []
+      percentage: 0
+
+---
+spring:
+  config:
+    activate:
+      on-profile: redis
+ms:
+  gateway:
+    rate-limit:
+      backend: redis
