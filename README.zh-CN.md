@@ -52,5 +52,5 @@ scripts/            启停、冒烟测试、实验、依赖检查
 ## 说明
 
 - 仓库里的密码和令牌都是本地演示用的值。
-- 接口和另一个 Vue 3 前端 demo 一致，前端不在这个仓库里。
+- 接口和 [Vue 3 前端 demo](https://github.com/baronZhang/vue3-scaffold-demo) 一致，前端在单独的仓库里。
 - 个别注释提到 `docs/`，那是我的私人学习笔记，不在这个仓库里。
